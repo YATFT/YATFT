@@ -26,6 +26,14 @@
  * Defines
  ************************************************************/
 
+#define MASK_I2C_BAUD                               7
+#define MASK_I2C_START                           0x80
+#define MASK_I2C_STOP                            0x10
+#define MASK_I2C_IDLE                            0x00
+#define MASK_I2C_WRITE                           0x01
+#define MASK_I2C_READ_W_ACK                      0x02
+#define MASK_I2C_READ_WO_ACK                     0x03
+
 #define START_ADD                                 0ul
 #define FRAME_SIZE              (320ul * 240ul * 2ul)
 
@@ -40,17 +48,14 @@
     #define TRUE                               !FALSE  // True value
 #endif
 
-typedef enum{ TYPE_FLASH=0, TYPE_EXTERNAL=1, TYPE_VIDEOBUF=2} TYPE_MEMORY;
-
-/***************************************************************************
-* Prototypes                                                               *
-***************************************************************************/
 typedef struct {
     uint8_t info; uint8_t fontID; uint16_t firstChar; uint16_t lastChar; uint8_t reserved; uint8_t height;
 } FONT_HEADER;
 
 // Structure describing font glyph entry
 typedef struct { uint8_t offsetMSB; uint8_t width; uint16_t offsetLSB;} GLYPH_ENTRY;
+
+typedef enum{ TYPE_FLASH=0, TYPE_EXTERNAL=1, TYPE_VIDEOBUF=2} TYPE_MEMORY;
 
 typedef struct { TYPE_MEMORY type; char *address;} FONT_FLASH;
 
@@ -108,6 +113,17 @@ typedef struct { // Data stored for FONT AS A WHOLE:
 /******************************************************************************
  * User Defines
  *****************************************************************************/
+/* Results of Disk Functions */
+typedef enum {
+    RES_OK = 0,     /* 0: Successful */
+    RES_ERROR,      /* 1: R/W Error */
+    RES_WRPRT,      /* 2: Write Protected */
+    RES_NOTRDY,     /* 3: Not Ready */
+    RES_PARERR      /* 4: Invalid Parameter */
+} DRESULT;
+
+#define MEDIA_SECTOR_SIZE   (uint32_t) 512
+
 #define IMAGE_NORMAL       1  // Normal image stretch code
 #define IMAGE_X2           2  // Stretched image stretch code
 // constants used for circle/arc computation
@@ -150,8 +166,6 @@ typedef struct { // Data stored for FONT AS A WHOLE:
 /*********************************************************************
 * Overview: Some basic colors definitions.
 *********************************************************************/
-// Color codes
-
 // COLORS
 
 #define RGBConvert(red, green, blue)    (uint16_t) ((((uint16_t)(red) & 0xF8) << 8) | (((uint16_t)(green) & 0xFC) << 3) | ((uint16_t)(blue) >> 3))
@@ -290,10 +304,11 @@ typedef struct { // Data stored for FONT AS A WHOLE:
 #define setReadDirInline()      { DDRH &= ~B01111000; DDRE &= ~B00101000; DDRG &= ~B00100000; DDRB &= ~B00010000;}
 #define readport8inline(result) { result = ((PINH & B00011000) << 3) | ((PINE & B00001000) << 2) | ((PING & B00100000) >> 1) | \
                                            ((PINE & B00100000) >> 2) | ((PINB & B00010000) >> 2) | ((PINH & B01100000) >> 5);}
-#define scanButtonsInline(result) { RD_ACTIVE; setReadDirInline(); DELAY7; \
+#define scanButtonsInline(result) { RD_ACTIVE; setReadDirInline(); DELAY7; DELAY7; DELAY7; \
                                   result = ((PING & B00100000) >> 1) | ((PINE & B00100000) >> 2) | \
                                            ((PINB & B00010000) >> 2) | ((PINH & B01100000) >> 5); setWriteDirInline();}
 
+#define write8                  write8inline
 #define CD_MASK                 B00000001
 #define CS_MASK                 B00000010
 #define RD_MASK                 B00000100
@@ -600,15 +615,62 @@ static const unsigned char font[] PROGMEM = {
 /*********************************************************************
 * Class
 *********************************************************************/
-class YATFT {
-
+class  INTRFC {
   public:
+#ifndef wrReg8
+    void        wrReg8(uint16_t a, uint8_t d) {wrReg8inline(a, d);};
+#endif
+#ifndef wrReg16
+    void        wrReg16(uint16_t a, uint16_t d) {wrReg16inline(a, d);};
+#endif
+#ifndef wrReg32
+    void        wrReg32(uint16_t a, uint32_t d) {wrReg32inline(a, d);};
+#endif
+    uint8_t     rdReg8(uint16_t  r);
+    uint16_t    rdReg16(uint16_t r);
+    uint32_t    rdReg32(uint16_t r);
+#ifndef setReadDir
+    void        setReadDir(void) { setReadDirInline();};
+#endif
+#ifndef setWriteDir
+    void        setWriteDir(void) { setWriteDirInline();};
+#endif
+#ifndef read8fn
+    uint8_t     read8fn(void) { uint8_t result; read8inline(result); return result;};
+    #define  read8isFunctionalized
+#endif
+#ifndef readport8fn
+    uint8_t     readport8fn(void) { uint8_t result; readport8inline(result); return result;};
+    #define  readport8isFunctionalized
+#endif
+    void        GetMemBuff(uint32_t address, uint8_t * buff, uint16_t length);
+    uint8_t     GetMem(uint32_t address);
+    void        SetAddress(uint32_t  r) { WR_CD_ACTIVE; RD_IDLE; write8(0x80|(r)>>16); write8((r)>>8); write8(r); WR_IDLE;};
+    void        WriteData(uint16_t v) { WR_ACTIVE; RD_CD_IDLE; write8((v)>>8); write8(v); WR_IDLE;};
+    void        WriteData32(uint32_t v) { WR_ACTIVE; RD_CD_IDLE; write8((v)>>24); write8((v)>>16); write8((v)>>8); write8(v); WR_IDLE;};
+    void        I2C_Init(void) { wrReg8(0x235, 0x00); wrReg8(0x233, MASK_I2C_BAUD); wrReg8(0x232, 0x03); wrReg8(0x232, 0x01);};
+    void        I2C_SetID(uint8_t  i2c_address) { _I2C_address = i2c_address;};
+    void        I2C_Ctl(uint8_t code) { if( I2C_Wait()==0)  wrReg8(0x231, code);};
+    uint8_t     I2C_Wait(void) { uint16_t to=65535; while((!(rdReg8(0x234)&0x80))&&(to--)); if (rdReg8(0x234)&0x80) return 0; else return -1;};
+    void        I2C_Write(uint8_t byte) { wrReg8(0x230, byte);};
+    uint8_t     I2C_Read(void) {uint32_t timeout=0xFFFFFFFF; uint8_t data; wrReg8(0x230, 0xFF); while((!(rdReg8(0x236)&0x01))&&(timeout--));
+                                if (rdReg8(0x236)&0x01) data=rdReg8(0x237); else data =-1; return data;};
 
+    uint8_t     _I2C_address;
+    PREVIEW_PARAM _param;
+    uint16_t    _color;
+};
+
+
+/*********************************************************************
+* Class
+*********************************************************************/
+class YATFT:INTRFC {
+  public:
     YATFT(uint8_t d) { OUT_DIR_SIGNAL; CD_DATA; CS_IDLE; RD_IDLE; WR_IDLE; RST_IDLE; init();};
     YATFT(void) { OUT_DIR_SIGNAL; CD_DATA; CS_IDLE; RD_IDLE; WR_IDLE; RST_IDLE; init();};
     void        begin(uint16_t id = 0x9325);
     void        reset(void) { WR_RD_CS_IDLE; RST_CD_ACTIVE; RST_ACTIVE; delay(20); RST_IDLE; delay(100); wrReg8(0xA2, 0x01); delay(100);};
-    // Bitmap
     void        PutPixel(int16_t x, int16_t y);
     uint16_t    DrawArc(int16_t xL, int16_t yT, int16_t xR, int16_t yB, int16_t r1, int16_t r2, uint8_t octant);
     uint16_t    DrawLine(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2);
@@ -618,36 +680,27 @@ class YATFT {
     void        DrawFillRect(int16_t left, int16_t top, int16_t right, int16_t bottom);
     void        SetColor(uint16_t color) { _color = color;};
     uint16_t    GetColor(void) { return _color;};
+    void        SetRGB(void) { wrReg8(0x1A4, 0xc0);};
+    void        SetYUV(void) { wrReg8(0x1A4, 0x00);};
     uint16_t    color565(uint8_t r, uint8_t g, uint8_t b) { return ((r&0xF8)<<8)|((g&0xFC)<<3)|(b>>3);};
-    uint8_t     rdReg8(uint16_t r);
-    uint16_t    rdReg16(uint16_t r);
-    uint32_t    rdReg32(uint16_t r);
-
     void        MainWndEnable(uint8_t enable) { uint8_t r; r=rdReg8(0x70); if(enable) r=r&0x7F; else r=r|0x80; wrReg8(0x70, r);};
     void        MainWndInit(uint32_t startaddr, uint16_t linewidth, uint16_t bpp, uint8_t orient, uint8_t rgb);
-    void        FloatWndInit1(uint32_t startaddr, uint16_t linewidth, uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint8_t rgb);
+    void        FloatWndInit(uint32_t startaddr, uint16_t linewidth, uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint8_t rgb);
+    void        FloatWndEnable(bool enable) { if(enable==TRUE) wrReg8(0x71, rdReg8(0x71)|0x10); else wrReg8(0x71,rdReg8(0x71)&~0x10);};
     void        FocusWnd(uint8_t wnd);
     void        ClearDevice(void) { uint32_t i; for(i=0; i<(GetMaxY()+1); i++) { DrawLine(0, i, GetMaxX()+1, i);}};
-    void        SetAddress(uint32_t  r) { WR_CD_ACTIVE; RD_IDLE; write8(0x80|(r)>>16); write8((r)>>8); write8(r); WR_IDLE;};
-    void        WriteData(uint16_t v) { WR_ACTIVE; RD_CD_IDLE; write8((v)>>8); write8(v); WR_IDLE;};
-    void        WriteData32(uint32_t v) { WR_ACTIVE; RD_CD_IDLE; write8((v)>>24); write8((v)>>16); write8((v)>>8); write8(v); WR_IDLE;};
-#ifndef wrReg8
-    void        wrReg8(uint16_t a, uint8_t d);
-#endif
-#ifndef wrReg16
-    void        wrReg16(uint16_t a, uint16_t d);
-#endif
-#ifndef wrReg32
-    void        wrReg32(uint16_t a, uint32_t d);
-#endif
+    void        SetFont(const GFXfont * f);
+    uint16_t    OutText(unsigned char * textString);
+    void        OutChar(unsigned char ch);
+    int16_t     GetTextWidth(char * textString, void * font);
+    int16_t     GetTextHeight(void * font);
+    uint16_t    OutTextXY(int16_t x, int16_t y, char * textString);
 #ifndef gpio_bl
-    void        gpio_bl(uint8_t state);
+    void        gpio_bl(uint8_t a) {gpio_blInline(a);};
 #endif
 #ifndef scanButtons
-    uint8_t     scanButtons(void);
+    uint8_t     scanButtons(void) {uint8_t result; scanButtonsInline(result); return ((~result)&0x1F);};
 #endif
-    uint8_t     ScanButt(void);
-
     // Data
     uint16_t    _color;
     uint8_t     _page;
@@ -658,69 +711,47 @@ class YATFT {
     uint16_t    _clipRight;
     uint16_t    _clipBottom;
     uint8_t     _fontOrientation;
+    int16_t     _fontHeight;         // Installed font height
     uint16_t    _cursorX;            // Current cursor x-coordinates
     uint16_t    _cursorY;            // Current cursor y-coordinates
     uint16_t    _lineType;           // Current line type
     uint16_t    _lineThickness;      // Current line thickness
     bool        _panelSelect = 1;
     bool        _pause = 0;
-    PREVIEW_PARAM _param;
-    void        SetFont(const GFXfont * f);
-    uint16_t    OutText(unsigned char * textString);
-    void        OutChar(unsigned char ch);
-    int16_t     GetTextWidth(char * textString, void * font);
-    int16_t     GetTextHeight(void * font);
-    uint16_t    OutTextXY(int16_t x, int16_t y, char/*XCHAR*/* textString);
 
  private:
 
     void        SetPanel(bool panel) {_panelSelect = panel;};
     bool        GetPanel(void) { return (_panelSelect);};
     void        init(void) { setWriteDir();};
-    // These items may have previously been defined as macros
-    // in pin_magic.h.  If not, function versions are declared:
 #ifndef write8
-    void write8(uint8_t value);
-#endif
-#ifndef setWriteDir
-    void setWriteDir(void);
-#endif
-#ifndef setReadDir
-    void setReadDir(void);
+    void        write8(uint8_t value) { write8inline(value);};
 #endif
 #ifndef gpio_sprst
-    void gpio_sprst(uint8_t state);
+    void        gpio_sprst(uint8_t a) { gpio_sprstInline(a);};
 #endif
 #ifndef gpio_spena
-    void gpio_spena(uint8_t state);
+    void        gpio_spena(uint8_t a) { gpio_spenaInline(a);};
 #endif
 #ifndef gpio_spclk
-    void gpio_spclk(uint8_t state);
+    void        gpio_spclk(uint8_t a) { gpio_spclkInline(a);};
 #endif
 #ifndef gpio_spdat
-    void gpio_spdat(uint8_t state);
+    void        gpio_spdat(uint8_t a) { gpio_spdatInline(a);};
 #endif
 #ifndef spi_write
-    void spi_write(uint8_t a);
+    void        spi_write(uint8_t  a) { spi_writeInline(a);};
 #endif
 #ifndef spi_setregw
-    void spi_setregw(uint8_t a, uint16_t b);
+    void        spi_setregw(uint8_t a, uint16_t b) { spi_setregwInline(a, b);};
 #endif
 #ifndef spi_setregb
-    void spi_setregb(uint8_t a, uint8_t b);
+    void        spi_setregb(uint8_t a, uint8_t b) { spi_setregbInline(a, b);};
 #endif
-#ifndef read8fn
-    uint8_t read8fn(void);
-    #define  read8isFunctionalized
-#endif
-#ifndef readport8fn
-    uint8_t readport8fn(void);
-    #define  readport8isFunctionalized
-#endif
-    uint8_t  driver;
-    uint8_t  gpioStatus;
-    int16_t  cursor_x, cursor_y;
-    GFXfont  *gfxFont;
+    uint8_t     driver;
+    uint8_t     gpioStatus;
+    int16_t     cursor_x, cursor_y;
+    GFXfont   * gfxFont;
 };
 
-#endif
+#endif // _YATFT_H_
