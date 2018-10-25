@@ -16,8 +16,6 @@
 #endif // __AVR__
 #include "YATFT.h"
 
-int16_t   _fontHeight;                      // Installed font height
-
 ///////////////////////////////////////////////////////////////////////////////
 
 #if !defined(__INT_MAX__) || (__INT_MAX__ > 0xFFFF)
@@ -50,7 +48,7 @@ void  YATFT::begin(uint16_t id) {
     wrReg8(0x1F, 0x00); wrReg8(0x24, 0x01); wrReg8(0x26, 0x00);
     wrReg8(0x27, 0x00); wrReg8(0xA0, 0x00);
     MainWndEnable(false); MainWndInit(0, 320, 0x04, 0, 1);
-    FloatWndInit1(253600L, 1, 1, 1, 1, 1, 1);
+    FloatWndInit(253600L, 1, 1, 1, 1, 1, 1);
     FocusWnd(0);
     MainWndEnable(1);
 }
@@ -280,21 +278,34 @@ void  YATFT::PutPixel(int16_t x, int16_t y) {
   #define readport8(x) x=readport8fn()
 #endif
 
-uint8_t  YATFT::rdReg8(uint16_t r) {
+uint8_t  INTRFC::rdReg8(uint16_t r) {
     static  uint8_t x; RD_IDLE; WR_CD_ACTIVE; write8(0x00); write8((r)>>8); write8(r);
     RD_ACTIVE; setReadDir(); WR_CD_IDLE; read8(x); read8(x); RD_IDLE; setWriteDir(); return x;
 }
 
-uint16_t  YATFT::rdReg16(uint16_t r) {
+uint16_t  INTRFC::rdReg16(uint16_t r) {
     static WORD_VAL x; RD_IDLE; WR_CD_ACTIVE; write8(0x00); write8((r) >> 8); write8(r);
     RD_ACTIVE; setReadDir(); WR_CD_IDLE; read8(x.v[0]); read8(x.v[0]); read8(x.v[1]);
     RD_IDLE; setWriteDir(); return x.Val;
 }
 
-uint32_t  YATFT::rdReg32(uint16_t r) {
+uint32_t  INTRFC::rdReg32(uint16_t r) {
     static DWORD_VAL x; RD_IDLE; WR_CD_ACTIVE; write8(0x00); write8((r) >> 8); write8(r);
     RD_ACTIVE;setReadDir(); WR_CD_IDLE; read8(x.v[0]); read8(x.v[0]); read8(x.v[1]);
     read8(x.v[2]); read8(x.v[3]); RD_IDLE; setWriteDir(); return x.Val;
+}
+
+void  INTRFC::GetMemBuff(uint32_t address, uint8_t * buff, uint16_t length) {
+    uint8_t  value;  uint16_t  i; SetAddress(address); setReadDir(); WR_CS_CD_IDLE; RD_CS_ACTIVE;
+    for (i = 0; i < length; i++) { CS_IDLE; CS_IDLE; CS_ACTIVE; CS_ACTIVE; readport8(*buff); buff++;}
+    RD_CS_IDLE; setWriteDir();
+}
+
+uint8_t  INTRFC::GetMem(uint32_t address) {
+    uint8_t  value;  uint16_t  i; SetAddress(address); setReadDir();
+    CS_IDLE; CD_DATA; WR_IDLE; RD_ACTIVE; CS_ACTIVE;
+    for (i = 0; i < 1; i++) { CS_IDLE; CS_IDLE; _NOP(); _NOP(); CS_ACTIVE; CS_ACTIVE; value = readport8fn();}
+    CS_IDLE; RD_IDLE; setWriteDir(); return value;
 }
 
     /////////////////////////////////////////////////////////////////////
@@ -329,129 +340,47 @@ uint32_t  YATFT::rdReg32(uint16_t r) {
         #define ROTATION    3
     #endif
 
-
-
 void  YATFT::MainWndInit(uint32_t startaddr, uint16_t linewidth, uint16_t bpp, uint8_t orient, uint8_t rgb) {
 #if (ROTATION == 0)
-    wrReg32(0x74, (uint32_t)startaddr/4 + (uint32_t)WIN_START_ADDR);	// default to be 0 deg orientation
+    wrReg32(0x74, (uint32_t)startaddr/4+(uint32_t)WIN_START_ADDR);
 #else
-    wrReg32(0x74, ((uint32_t)WIN_START_ADDR + (uint32_t)startaddr/4));	// default to be 0 deg orientation
+    wrReg32(0x74, ((uint32_t)WIN_START_ADDR+(uint32_t)startaddr/4));
 #endif
-    wrReg8(0x70, (rdReg8(0x70) | bpp)); wrReg16(0x78,(uint16_t)linewidth>>1);
-    wrReg8(0x71, ((rdReg8(0x71) | 0x40 | ROTATION))); wrReg8(0x1A4, ((rdReg8(0x1A4)&0xC0) | 0x40));
-    if(rgb) wrReg8(0x1A4, (rdReg8(0x1A4)&0xC0) | 0x40);
+    wrReg8(0x70, (rdReg8(0x70)|bpp)); wrReg16(0x78,(uint16_t)linewidth>>1);
+    wrReg8(0x71, ((rdReg8(0x71)|0x40|ROTATION))); wrReg8(0x1A4, ((rdReg8(0x1A4)&0xC0)|0x40));
+    if(rgb) wrReg8(0x1A4, (rdReg8(0x1A4)&0xC0)|0x40);
     else    wrReg8(0x1A4, rdReg8(0x1A4) & ~0x40);
 }
 
-void  YATFT::FloatWndInit1(uint32_t startaddr, uint16_t linewidth, uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint8_t rgb) {
+void  YATFT::FloatWndInit(uint32_t startaddr, uint16_t linewidth, uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint8_t rgb) {
 #if (ROTATION == 0)
-    wrReg16(0x84, x >> 1); wrReg16(0x8C,((x + width) >> 1) - 1); wrReg16(0x88,y);
-    wrReg16(0x90,y+height-1); wrReg32(0x7C, startaddr >> 2);
-    wrReg16(0x80, linewidth>>1); wrReg8(0x70, rdReg8(0x70) | 4);
-    if (rgb)  wrReg8(0x1A4, (rdReg8(0x1A4)&0xC0) | 0x80);  //RGB mode, set bit7 '1
-    else      wrReg8(0x1A4, rdReg8(0x1A4) & ~0x80);        //YUV mode, set bit7 '0
+    wrReg16(0x84,x>>1); wrReg16(0x8C,((x+width)>>1)-1); wrReg16(0x88,y);
+    wrReg16(0x90,y+height-1); wrReg32(0x7C, startaddr>>2);
+    wrReg16(0x80,linewidth>>1); wrReg8(0x70, rdReg8(0x70)|4);
+    if (rgb)  wrReg8(0x1A4, (rdReg8(0x1A4)&0xC0)|0x80);  //RGB mode, set bit7 '1
+    else      wrReg8(0x1A4, rdReg8(0x1A4)&~0x80);        //YUV mode, set bit7 '0
 #else
     #if (ROTATION == 2)
-        wrReg16(0x84, x >> 1); wrReg16(0x8C,((x + width) >> 1) - 1); wrReg16(0x88,y);
-        wrReg16(0x90,y + height - 1); wrReg32(0x7C, (startaddr) >> 2);
-        wrReg16(0x80, (linewidth) >> 1); wrReg8(0x70, rdReg8(0x70) | 4);
-        if (rgb)  wrReg8(0x1A4, (rdReg8(0x1A4)&0xC0) | 0x80);
-        else      wrReg8(0x1A4, rdReg8(0x1A4) & ~0x80);
+        wrReg16(0x84,x>>1); wrReg16(0x8C,((x+width)>>1)-1); wrReg16(0x88,y);
+        wrReg16(0x90,y+height-1); wrReg32(0x7C, (startaddr)>>2);
+        wrReg16(0x80,(linewidth)>>1); wrReg8(0x70, rdReg8(0x70)|4);
+        if (rgb)  wrReg8(0x1A4, (rdReg8(0x1A4)&0xC0)|0x80);
+        else      wrReg8(0x1A4, rdReg8(0x1A4)&~0x80);
     #endif
 #endif
 }
 
 void  YATFT::FocusWnd(uint8_t wnd) {
     uint16_t  linewidth;
-    if (wnd) { _page = 1; linewidth = (uint16_t)rdReg8(0x81)<<8;
-        linewidth = linewidth |(rdReg8(0x80)&0x00FF);
-        linewidth = linewidth<<1; _line_mem_pitch = linewidth;
-    } else {
-        _page = 0; _line_mem_pitch = LINE_MEM_PITCH;
-    }
+    if (wnd) { _page=1; linewidth=(uint16_t)rdReg8(0x81)<<8;
+        linewidth=linewidth|(rdReg8(0x80)&0x00FF); linewidth=linewidth<<1; _line_mem_pitch=linewidth;
+    } else { _page=0; _line_mem_pitch=LINE_MEM_PITCH;}
 }
 
-#ifndef write8
-void  YATFT::write8(uint8_t value) { write8inline(value);}
-#endif
-
-#ifdef read8isFunctionalized
-uint8_t  YATFT::read8fn(void) { uint8_t result; read8inline(result); return result;}
-#endif
-
-#ifdef readport8isFunctionalized
-uint8_t YATFT::readport8fn(void) { uint8_t result; readport8inline(result); return result;}
-#endif
-
-#ifndef scanButtons
-uint8_t  YATFT::scanButtons(void) { uint8_t result; scanButtonsInline(result); return ((~result)&0x1F);}
-#endif
-
-#ifndef setWriteDir
-void YATFT::setWriteDir(void) { setWriteDirInline();}
-#endif
-
-#ifndef setReadDir
-void YATFT::setReadDir(void) { setReadDirInline();}
-#endif
-
-#ifndef wrReg8
-void YATFT::wrReg8(uint16_t a, uint8_t d) { wrReg8inline(a, d);}
-#endif
-
-#ifndef wrReg16
-void YATFT::wrReg16(uint16_t a, uint16_t d) { wrReg16inline(a, d);}
-#endif
-
-#ifndef wrReg32
-void YATFT::wrReg32(uint16_t a, uint32_t d) { wrReg32inline(a, d);}
-#endif
-
-#ifndef gpio_bl
-void YATFT::gpio_bl(uint8_t a) { gpio_blInline(a);}
-#endif
-
-#ifndef gpio_sprst
-void YATFT::gpio_sprst(uint8_t a) { gpio_sprstInline(a);}
-#endif
-
-#ifndef gpio_spena
-void YATFT::gpio_spena(uint8_t a) { gpio_spenaInline(a);}
-#endif
-
-#ifndef gpgpio_spclkio_spena
-void YATFT::gpio_spclk(uint8_t a) { gpio_spclkInline(a);}
-#endif
-
-#ifndef gpio_spdat
-void YATFT::gpio_spdat(uint8_t a) { gpio_spdatInline(a);}
-#endif
-
-#ifndef spi_write
-void YATFT::spi_write(uint8_t  a) { spi_writeInline(a);}
-#endif
-
-#ifndef spi_setregw
-void YATFT::spi_setregw(uint8_t a, uint16_t b) { spi_setregwInline(a, b);}
-#endif
-
-#ifndef spi_setregb
-void YATFT::spi_setregb(uint8_t a, uint8_t b) { spi_setregbInline(a, b);}
-#endif
-
 void  YATFT::SetFont(const GFXfont *f) {
-    if(f) {            // Font struct pointer passed in?
-        if(!gfxFont) { // And no current font struct?
-            // Switching from classic to new font behavior.
-            // Move cursor pos down 6 pixels so it's on baseline.
-            cursor_y += 6;
-        }
-    } else if(gfxFont) { // NULL passed.  Current font struct defined?
-        // Switching from new to classic font behavior.
-        // Move cursor pos up 6 pixels so it's at top-left of char.
-        cursor_y -= 6;
-    }
-    gfxFont = (GFXfont *)f;
+    if(f) { if(!gfxFont) { cursor_y+=6;}}
+    else if(gfxFont) { cursor_y-=6;}
+    gfxFont=(GFXfont *)f;
 }
 
 uint16_t  YATFT::OutText(unsigned char* textString) {
@@ -465,41 +394,31 @@ void  YATFT::OutChar(unsigned char  ch) {
     GLYPH_ENTRY * pChTable;  uint8_t * pChImage, temp, mask, adv, w;
     int8_t  yo, yA; int16_t  chWidth, xCnt, yCnt, x, y;
     if (!gfxFont) { // 'Classic' built-in font
-        chWidth = 5; _fontHeight = 8; x = GetX(); 
-        for (xCnt = 0; xCnt < chWidth; xCnt++) {
-            y = GetY(); mask = 0x01;
-            temp = pgm_read_byte(&font[ch * 5 + xCnt]);
-            for (yCnt = 0; yCnt < _fontHeight; yCnt++) {        
-                if (temp & mask) { PutPixel(x,y);}
-                y++; mask <<= 1;
-            }
-            x++;
-        }
-        x++;
+        chWidth=5; _fontHeight=8; x=GetX(); 
+        for (xCnt=0; xCnt<chWidth; xCnt++) {
+            y=GetY(); mask=0x01; temp=pgm_read_byte(&font[ch*5+xCnt]);
+            for (yCnt=0; yCnt<_fontHeight; yCnt++) {        
+                if (temp&mask) { PutPixel(x,y);} y++; mask<<=1;
+            } x++;
+        } x++;
     } else { // Custom font
         // Character is assumed previously filtered by write() to eliminate
         // newlines, returns, non-printable characters, etc.  Calling
         // drawChar() directly with 'bad' characters of font may cause mayhem!
         ch -= (uint8_t)pgm_read_byte(&gfxFont->first);
         yA =  (uint8_t)pgm_read_byte(&gfxFont->yAdvance);
-        GFXglyph *glyph  = &(((GFXglyph *)pgm_read_pointer(&gfxFont->glyph))[ch]);
-        uint8_t  *bitmap = (uint8_t *)pgm_read_pointer(&gfxFont->bitmap);
-        uint16_t bo = pgm_read_word(&glyph->bitmapOffset);
-        uint8_t  h  = pgm_read_byte(&glyph->height);
-                 w  = pgm_read_byte(&glyph->width);
-        int8_t   xo = pgm_read_byte(&glyph->xOffset);
-                 yo = pgm_read_byte(&glyph->yOffset);
-        uint8_t  xx, yy, bits = 0, bit = 0;
-        int16_t  xo16 = 0, yo16 = 0;
-        x = GetX(); 
-        y = GetY() + yA*3/4; 
+        GFXglyph *glyph=&(((GFXglyph *)pgm_read_pointer(&gfxFont->glyph))[ch]);
+        uint8_t  *bitmap=(uint8_t *)pgm_read_pointer(&gfxFont->bitmap);
+        uint16_t bo=pgm_read_word(&glyph->bitmapOffset);
+        uint8_t  h=pgm_read_byte(&glyph->height); w=pgm_read_byte(&glyph->width);
+        int8_t  xo=pgm_read_byte(&glyph->xOffset); yo=pgm_read_byte(&glyph->yOffset);
+        uint8_t  xx, yy, bits = 0, bit = 0; int16_t  xo16 = 0, yo16 = 0;
+        x=GetX(); y=GetY()+yA*3/4; 
         for (yy = 0; yy < h; yy++) {
             for (xx = 0; xx < w; xx++) {        
-                if (!(bit++ & 7)) {
-                    bits = pgm_read_byte(&bitmap[bo++]);
-                }
-                if (bits & 0x80) {
-                    PutPixel((int16_t)x + (int16_t)xo + (int16_t)xx, (int16_t)y + (int16_t)yo + (int16_t)yy);
+                if (!(bit++&7)) { bits=pgm_read_byte(&bitmap[bo++]);}
+                if (bits&0x80) { 
+                    PutPixel((int16_t)x+(int16_t)xo+(int16_t)xx, (int16_t)y+(int16_t)yo+(int16_t)yy);
                 }
                 bits <<= 1;
             }
@@ -513,18 +432,14 @@ int16_t  YATFT::GetTextWidth(char * textString, void* font) {
     GFXfont * pHeader = (GFXfont*)font; int16_t   textWidth; char  ch;
     if (font != NULL) { // User Font
         textWidth = 0;
-        while((unsigned char)15<(unsigned char)(ch = *textString++))
-        {
-            ch -= (uint8_t)pgm_read_byte(&pHeader->first);
-            GFXglyph *glyph  = &(((GFXglyph *)pgm_read_pointer(&pHeader->glyph))[ch]);
-            uint8_t  w  = pgm_read_byte(&glyph->width) + 1; textWidth += w;
+        while((unsigned char)15<(unsigned char)(ch=*textString++)) {
+            ch-=(uint8_t)pgm_read_byte(&pHeader->first);
+            GFXglyph *glyph=&(((GFXglyph *)pgm_read_pointer(&pHeader->glyph))[ch]);
+            uint8_t w=pgm_read_byte(&glyph->width)+1; textWidth+=w;
         }
     } else { // Default Font
-        textWidth = 0;
-        while((unsigned char)15<(unsigned char)(ch = *textString++))
-        {
-            textWidth += 7;
-        }
+        textWidth=0;
+        while((unsigned char)15<(unsigned char)(ch = *textString++)) { textWidth+=7;}
     }
     return textWidth;
 }
@@ -541,14 +456,4 @@ uint16_t  YATFT::OutTextXY(int16_t x, int16_t y, char * textString) {
     else { start = 1; return 1;}
 }
 
-uint8_t  YATFT::ScanButt(void) {
-#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__) || defined (__AVR_ATmega328__) || defined(__AVR_ATmega8__)
-    uint8_t  butt_state; digitalWrite(A2, LOW); setReadDir(); delay(1);
-    readport8inline(butt_state); setWriteDir(); return (~(butt_state | 0xE0));
-#else
-
- #error "Board type unsupported / not recognized"
-
-#endif
-}
 
