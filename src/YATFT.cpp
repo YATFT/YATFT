@@ -149,7 +149,7 @@ arc_draw_width_height_state:
 #define BLUE8(color16)  (uint8_t) ((color16 & 0x001F) << 3)
 
 uint16_t  YATFT::DrawLine(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2) {
-    uint16_t sw;  if (x1 > x2) { sw = x2; x2 = x1; x1 = sw;} if (y1 > y2) { sw = y2; y2 = y1; y1 = sw;}
+//    uint16_t sw;  if (x1 > x2) { sw = x2; x2 = x1; x1 = sw;} if (y1 > y2) { sw = y2; y2 = y1; y1 = sw;}
     wrReg8(0x1E4, x1 & 0xFF); wrReg8(0x1E5, (x1 >> 8) & 0xFF); wrReg8(0x1E8, y1 & 0xFF);
     wrReg8(0x1E9, (y1 >> 8) & 0xFF); wrReg8(0x1EC, x2 & 0xFF); wrReg8(0x1ED, (x2 >> 8) & 0xFF);
     wrReg8(0x1F0, y2 & 0xFF); wrReg8(0x1F1, (y2 >> 8) & 0xFF); wrReg8(0x1D4, 0);
@@ -308,6 +308,11 @@ uint8_t  INTRFC::GetMem(uint32_t address) {
     CS_IDLE; RD_IDLE; setWriteDir(); return value;
 }
 
+void  INTRFC::PutMemBuff(uint32_t address, uint8_t * buff, uint16_t length) {
+    uint8_t  value;  uint16_t  i; SetAddress(address); RD_CD_IDLE; WR_ACTIVE;
+    for (i = 0; i < length; i++) { write8(*buff); buff++;} WR_IDLE; CS_IDLE;
+}
+
     /////////////////////////////////////////////////////////////////////
     // ROTATION MODE
 
@@ -358,7 +363,7 @@ void  YATFT::FloatWndInit(uint32_t startaddr, uint16_t linewidth, uint16_t x, ui
     wrReg16(0x90,y+height-1); wrReg32(0x7C, startaddr>>2);
     wrReg16(0x80,linewidth>>1); wrReg8(0x70, rdReg8(0x70)|4);
     if (rgb)  wrReg8(0x1A4, (rdReg8(0x1A4)&0xC0)|0x80);  //RGB mode, set bit7 '1
-    else      wrReg8(0x1A4, rdReg8(0x1A4)&~0x80);        //YUV mode, set bit7 '0
+    else      wrReg8(0x1A4, rdReg8(0x1A4) & ~0x80);        //YUV mode, set bit7 '0
 #else
     #if (ROTATION == 2)
         wrReg16(0x84,x>>1); wrReg16(0x8C,((x+width)>>1)-1); wrReg16(0x88,y);
@@ -373,7 +378,8 @@ void  YATFT::FloatWndInit(uint32_t startaddr, uint16_t linewidth, uint16_t x, ui
 void  YATFT::FocusWnd(uint8_t wnd) {
     uint16_t  linewidth;
     if (wnd) { _page=1; linewidth=(uint16_t)rdReg8(0x81)<<8;
-        linewidth=linewidth|(rdReg8(0x80)&0x00FF); linewidth=linewidth<<1; _line_mem_pitch=linewidth;
+        linewidth=linewidth|(rdReg8(0x80)&0x00FF);
+        linewidth=linewidth<<1; _line_mem_pitch=linewidth;
     } else { _page=0; _line_mem_pitch=LINE_MEM_PITCH;}
 }
 
@@ -454,6 +460,50 @@ uint16_t  YATFT::OutTextXY(int16_t x, int16_t y, char * textString) {
     static uint8_t start = 1; if (start) { MoveTo(x,y); start = 0;}
     if (OutText(textString) == 0) { return 0;}
     else { start = 1; return 1;}
+}
+
+/*********************************************************************
+*  DS1307
+*********************************************************************/
+uint8_t  DS1307::isrunning(void) {
+    I2C_Init(); I2C_SetID(DS1307_ADDRESS); I2C_Ctl(MASK_I2C_START|MASK_I2C_WRITE);
+    I2C_Write(_I2C_address); I2C_Ctl(MASK_I2C_WRITE); I2C_Write(0);
+    I2C_Ctl(MASK_I2C_START|MASK_I2C_WRITE); I2C_Write(_I2C_address | 0x01);
+    I2C_Ctl(MASK_I2C_READ_WO_ACK); uint8_t ss = I2C_Read();
+    I2C_Ctl(MASK_I2C_STOP); I2C_Write(0xFF); return !(ss>>7);
+}
+
+bool  DS1307::read(tmElements_t &tm) {
+    uint8_t sec; I2C_Init(); I2C_SetID(DS1307_ADDRESS); I2C_Ctl(MASK_I2C_START|MASK_I2C_WRITE);
+    I2C_Write(_I2C_address); I2C_Ctl(MASK_I2C_WRITE); I2C_Write(0);
+    I2C_Ctl(MASK_I2C_START|MASK_I2C_WRITE); I2C_Write(_I2C_address | 0x01);
+    I2C_Ctl(MASK_I2C_READ_W_ACK); sec = I2C_Read(); tm.Second = bcd2dec(sec & 0x7f);   
+    I2C_Ctl(MASK_I2C_READ_W_ACK); tm.Minute = bcd2dec(I2C_Read());
+    I2C_Ctl(MASK_I2C_READ_W_ACK); tm.Hour   = bcd2dec(I2C_Read() & 0x3f);  // mask assumes 24hr clock
+    I2C_Ctl(MASK_I2C_READ_W_ACK); tm.Wday   = bcd2dec(I2C_Read());
+    I2C_Ctl(MASK_I2C_READ_W_ACK); tm.Day    = bcd2dec(I2C_Read());
+    I2C_Ctl(MASK_I2C_READ_W_ACK); tm.Month  = bcd2dec(I2C_Read());
+    I2C_Ctl(MASK_I2C_READ_WO_ACK); tm.Year   = y2kYearToTm((bcd2dec(I2C_Read())));
+    I2C_Ctl(MASK_I2C_STOP); I2C_Write(0xFF);
+    if (sec & 0x80) return false; // clock is halted
+    return true;
+}
+
+bool  DS1307::write(tmElements_t &tm) {
+    I2C_Init(); I2C_SetID(DS1307_ADDRESS); I2C_Ctl(MASK_I2C_START|MASK_I2C_WRITE);
+    I2C_Write(_I2C_address); I2C_Ctl(MASK_I2C_WRITE); I2C_Write(0);
+    I2C_Ctl(MASK_I2C_WRITE); I2C_Write((uint8_t)0x80); // Stop the clock. The seconds will be written last
+    I2C_Ctl(MASK_I2C_WRITE); I2C_Write(dec2bcd(tm.Minute));
+    I2C_Ctl(MASK_I2C_WRITE); I2C_Write(dec2bcd(tm.Hour)); // sets 24 hour format
+    I2C_Ctl(MASK_I2C_WRITE); I2C_Write(dec2bcd(tm.Wday));   
+    I2C_Ctl(MASK_I2C_WRITE); I2C_Write(dec2bcd(tm.Day));
+    I2C_Ctl(MASK_I2C_WRITE); I2C_Write(dec2bcd(tm.Month));
+    I2C_Ctl(MASK_I2C_WRITE); I2C_Write(dec2bcd(tmYearToY2k(tm.Year))); 
+    I2C_Ctl(MASK_I2C_WRITE); I2C_Write(0x11); I2C_Ctl(MASK_I2C_STOP);
+    I2C_Write(0xFF); I2C_Ctl(MASK_I2C_START|MASK_I2C_WRITE);
+    I2C_Write(_I2C_address); I2C_Ctl(MASK_I2C_WRITE);
+    I2C_Write(0); I2C_Ctl(MASK_I2C_WRITE); I2C_Write(dec2bcd(tm.Second));
+    return true;
 }
 
 

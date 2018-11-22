@@ -48,6 +48,11 @@
     #define TRUE                               !FALSE  // True value
 #endif
 
+//--------------------------------------------------------------------//
+#define DS1307_ADDRESS                           0xD0
+#define DS1307_CONTROL                           0x07
+#define DS1307_NVRAM                             0x08
+
 typedef struct {
     uint8_t info; uint8_t fontID; uint16_t firstChar; uint16_t lastChar; uint8_t reserved; uint8_t height;
 } FONT_HEADER;
@@ -104,6 +109,24 @@ typedef struct { // Data stored for FONT AS A WHOLE:
     uint8_t   yAdvance;         // Newline distance (y axis)
 } GFXfont;
 #endif /* _GFXFONT_H_ */
+
+typedef struct  { 
+  uint8_t Second; 
+  uint8_t Minute; 
+  uint8_t Hour; 
+  uint8_t Wday;   // day of week, sunday is day 1
+  uint8_t Day;
+  uint8_t Month; 
+  uint8_t Year;   // offset from 1970; 
+} RtcElements_t;
+
+#define  tmYearToY2k(Y)      ((Y) - 30)    // offset is from 2000
+#define  y2kYearToTm(Y)      ((Y) + 30)   
+
+
+//extern const PROGMEM FONT_FLASH GOLFontDefault; 	
+// Default Font assignement.
+//#define FONTDEFAULT                     GOLFontDefault
 
 // For compatibility with sketches written for older versions of library.
 // Color function name was changed to 'color565' for parity with 2.2" LCD
@@ -645,6 +668,7 @@ class  INTRFC {
 #endif
     void        GetMemBuff(uint32_t address, uint8_t * buff, uint16_t length);
     uint8_t     GetMem(uint32_t address);
+    void        PutMemBuff(uint32_t address, uint8_t * buff, uint16_t length);
     void        SetAddress(uint32_t  r) { WR_CD_ACTIVE; RD_IDLE; write8(0x80|(r)>>16); write8((r)>>8); write8(r); WR_IDLE;};
     void        WriteData(uint16_t v) { WR_ACTIVE; RD_CD_IDLE; write8((v)>>8); write8(v); WR_IDLE;};
     void        WriteData32(uint32_t v) { WR_ACTIVE; RD_CD_IDLE; write8((v)>>24); write8((v)>>16); write8((v)>>8); write8(v); WR_IDLE;};
@@ -752,6 +776,18 @@ class YATFT:INTRFC {
     uint8_t     gpioStatus;
     int16_t     cursor_x, cursor_y;
     GFXfont   * gfxFont;
+};
+
+/*********************************************************************
+* Class DS1307
+*********************************************************************/
+class  DS1307:INTRFC {
+  public:
+    uint8_t     isrunning(void);
+    bool        read(tmElements_t &tm);
+    bool        write(tmElements_t &tm);
+    uint8_t     dec2bcd(uint8_t num) { return ((num/10 * 16) + (num % 10));}; // Convert Decimal to Binary Coded Decimal (BCD)
+    uint8_t     bcd2dec(uint8_t num) { return ((num/16 * 10) + (num % 16));}; // Convert Binary Coded Decimal (BCD) to Decimal
 };
 
 #endif // _YATFT_H_
