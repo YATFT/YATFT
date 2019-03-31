@@ -31,6 +31,7 @@ void setup() {
     // initialize the display
     tft.begin();
 
+    // Camera OV7670 initialize
     cam.CamInit(&OV7670_VGA[0][0]);
     cam.CamVideoPreview(0, 0, 1, true);
 }
