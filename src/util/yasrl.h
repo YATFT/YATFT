@@ -20,7 +20,7 @@
  ************************************************************/
 // JPEG FIFO Size and Location
 #define JPEG_FIFO_BLK_SIZE      (uint32_t) (4 * 1024)
-#define JPEG_FIFO_BLK_NUMBER    (uint32_t) 16
+#define JPEG_FIFO_BLK_NUMBER    (uint32_t) 8 //16
 #define JPEG_FIFO_SIZE          JPEG_FIFO_BLK_SIZE * JPEG_FIFO_BLK_NUMBER
 #define JPEG_FIFO_START_ADDR    (uint32_t) (0x30000)
 
@@ -42,6 +42,7 @@ typedef enum _JPEG_ERR {NO_ERR,ERR_TIMEOUT,ERR_IMCOMPLETE,ERR_NO_DATA,ERR_DECODE
 *********************************************************************/
 class  SRL:INTRFC {
   public:
+    uint8_t     SDSectorRead(uint32_t sector_addr, uint8_t *buffer);
     uint8_t     SerialFile2JPEGFIFO(uint32_t fifoAddress, uint32_t byteSize);
     uint8_t     JPEGReadFromSerial(JPEG_DECODE * jpeg_decode, uint16_t left, uint16_t top, uint16_t right, uint16_t bot, uint32_t size);
 
