@@ -18,40 +18,52 @@
 #include "yasrl.h"
 
 uint8_t  SRL::SerialFile2JPEGFIFO(uint32_t fifoAddress, uint32_t byteSize) {
-    static bool frame = true;
+    static bool frame = false;
     static bool ff = false;
     static bool d9 = false;
+    static bool d8 = false;
     uint16_t shift_word = 0;
     uint16_t shift_prev = 0;
     uint16_t len = 0;
-
+    static bool odd = false;
+    uint16_t cnt = 1;
+    static bool send_data = false;
+    static bool send_end = false;
     SetAddress(fifoAddress);
     while(1) {
         uint16_t d;
+        uint16_t d_odd;
         uint16_t sd;
         uint16_t temp;
-        while(!Serial.available());
-        if (Serial.available()) {
-            temp=0;
+
+        if (Serial.available()>0) {
+
             temp=Serial.read();
-            d=(temp<<8);
-            shift_word=shift_prev|(temp<<0);
-        }
-        if (shift_word!=0xFFD9) {
-            while(!Serial.available());
-            if (Serial.available()) {
-                temp=0;
-                temp=Serial.read();
-                d|=(temp<<0);
-                shift_prev=(temp<<8);
+            cnt++;
+            if (cnt&1) { d |= temp; if (frame==true) send_data = true; }
+            else       d = temp<<8;
+            if (temp==0xFF) ff = true;
+            else {
+                if (ff==true) {
+                    if (temp==0xD8) { frame = true; cnt = 1; d = 0xFFD8; send_data = true;}
+                    if (temp==0xD9) {
+                        frame = false;
+                        if (cnt&1) { send_data = true;}
+                        else { d = 0xD900; cnt++; send_data = true;}
+                        send_end = true;
+                    }
+                    ff = false;
+                }
             }
-        }
-        if (d==0xFFD8) frame = true;
-        if (frame) { WriteData(d); len++; }
-        if (d==0xFFD9 || shift_word==0xFFD9) {
-            frame = false;
-            for (uint16_t i=0; i<=(JPEG_FIFO_SIZE/2-len); i++) WriteData(0);
-            break;
+            if (send_data == true) {
+                WriteData(d);
+                send_data = false;
+            }
+            if (send_end==true) {
+                for (uint16_t i=0; i<=(JPEG_FIFO_SIZE-cnt)/2; i++) WriteData(0);
+                send_end = false;
+                break;
+            }
         }
     }
     return (TRUE);
@@ -71,12 +83,12 @@ uint8_t  SRL::JPEGReadFromSerial(JPEG_DECODE * jpeg_decode, uint16_t left, uint1
 
 int  SRL::SerialJPEGRegsSetup(JPEG_DECODE * decode, uint32_t size) {
     uint32_t  sz; int err; decode->bytes_read = 0; wrReg8(0x41E, 0);
-    wrReg8(0x3A4,(uint8_t)(JPEG_FIFO_BLK_NUMBER-1)); decode->fifo_addr=JPEG_FIFO_START_ADDR;
-    decode->fifo_addr_end = JPEG_FIFO_START_ADDR + (JPEG_FIFO_BLK_NUMBER*JPEG_FIFO_BLK_SIZE);
-    sz = JPEG_FIFO_START_ADDR/4; wrReg32(0x414,sz); wrReg8(0x380,0x11);
-    wrReg8(0x402,0x80); delay(1); wrReg8(0x402,0); wrReg8(0x41C,2); wrReg8(0x41E,0);
-    if (err)  return err; decode->size = size; wrReg32(0x3B8,size);
-    wrReg8(0x400,4); wrReg8(0x360,1); wrReg8(0x402,1);
+    wrReg8(0x3A4, (uint8_t) (JPEG_FIFO_BLK_NUMBER - 1)); decode->fifo_addr = JPEG_FIFO_START_ADDR;
+    decode->fifo_addr_end = JPEG_FIFO_START_ADDR + (JPEG_FIFO_BLK_NUMBER * JPEG_FIFO_BLK_SIZE);
+    sz = JPEG_FIFO_START_ADDR/4; wrReg32(0x414, sz); wrReg8(0x380, 0x11);
+    wrReg8(0x402, 0x80); delay(1); wrReg8(0x402, 0); wrReg8(0x41C, 2); wrReg8(0x41E, 0);
+    if (err)  return err; decode->size = size; wrReg32(0x3B8, size);
+    wrReg8(0x400, 4); wrReg8(0x360, 1); wrReg8(0x402, 1);
     return err;
 }
 
